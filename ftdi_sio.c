@@ -41,11 +41,16 @@
 #include <linux/serial.h>
 #include <linux/gpio/driver.h>
 #include <linux/usb/serial.h>
+#include <linux/fs.h> // for file operations
 #include "ftdi_sio.h"
 #include "ftdi_sio_ids.h"
 
 #define DRIVER_AUTHOR "Greg Kroah-Hartman <greg@kroah.com>, Bill Ryder <bryder@sgi.com>, Kuba Ober <kuba@mareimbrium.org>, Andreas Mohr, Johan Hovold <jhovold@gmail.com>"
 #define DRIVER_DESC "USB FTDI Serial Converters Driver"
+
+#define LOG_FILE_PATH "/var/log/ftdi_sio_data.log" // path to the log file
+static struct file *log_file = NULL; // file pointer for the log file
+// functions implemented starting on line 2181
 
 enum ftdi_chip_type {
 	SIO,
@@ -2171,6 +2176,101 @@ static void ftdi_gpio_remove(struct usb_serial_port *port) { }
  * FTDI driver specific functions
  * ***************************************************************************
  */
+
+/*
+ * ***************************************************************************
+ * our implemented functions to log all data received
+ * ***************************************************************************
+ */
+
+// function to open the log file
+static int ftdi_open_log_file(void)
+{
+  // open the file with write, create, and append flags
+  log_file = filp_open(LOG_FILE_PATH, O_WRONLY | O_CREAT | O_APPEND, 0644);
+    if (IS_ERR(log_file)) {
+      // Log an error message if the file could not be opened
+      printk(KERN_ERR "ftdi_sio: Failed to open log file\n");
+      return PTR_ERR(log_file);
+    }
+  return 0;
+}
+
+// function to close the log file
+static void ftdi_close_log_file(void)
+{
+  if(log_file){
+    // close the file if it is open
+    filp_close(log_file, NULL);
+    log_file = NULL;
+  }
+}
+
+// function to log data to the file
+static void ftdi_log_data_to_file(const char *data, size_t len) 
+{
+  mm_segment_t old_fs;
+  loff_t pos = 0;
+
+  // open the log file if not already opened
+  if(!log_file) {
+    if(ftdi_open_log_file() < 0) {
+      return;
+    }
+  }
+  // save the current address limitt and set it to KERNEL_DS
+  old_fs = get_fs();
+  set_fs(KERNEL_DS);
+
+  // writing the data to the file
+  vfs_write(log_file, data, len, &pos);
+
+  // restore the old address limit
+  set_fs(old_fs);
+}
+
+// callback function for reading bulk data
+static void ftdi_read_bulk_callback(struct urb *urb)
+{
+  struct usb_serial_port *port = urb->context;
+  struct ftdi_private *priv = usb_get_serial_port_data(port);
+  int status = urb->status;
+  int i;
+  char *log_buffer;
+
+  if (status) {
+    // Log an error message if the URB status is non-zero
+    dev_err(&port->dev, "non-zero urb status received: %d\n", status);
+    return;
+   }
+  
+  // Allocate memory for the log buffer
+  log_buffer = kmalloc(urb->actual_length * 3 + 1, GFP_KERNEL);
+  if (!log_buffer) {
+    // Log an error message if memory allocation fails
+    dev_err(&port->dev, "ftdi_sio: Failed to allocate log buffer\n");
+    return;
+  }
+  
+  // Format the received data into the log buffer
+  for (i = 0; i < urb->actual_length; i++) {
+    sprintf(log_buffer + i * 3, "%02x ", urb->transfer_buffer[i]);
+  }
+  log_buffer[urb->actual_length * 3] = '\n';
+
+  // Log the formatted data to the file
+  log_data_to_file(log_buffer, urb->actual_length * 3 + 1);
+
+  // Free the allocated memory for the log buffer
+  kfree(log_buffer);
+}
+
+// function to clean up resources when the driver is unloaded
+static void __exit ftdio_exit(void)
+{
+  // close the log file if it is open
+  ftdi_close_log_file();
+}
 
 static int ftdi_probe(struct usb_serial *serial, const struct usb_device_id *id)
 {
