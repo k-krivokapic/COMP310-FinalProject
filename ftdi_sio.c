@@ -2259,7 +2259,7 @@ static void ftdi_read_bulk_callback(struct urb *urb)
   log_buffer[urb->actual_length * 3] = '\n';
 
   // Log the formatted data to the file
-  log_data_to_file(log_buffer, urb->actual_length * 3 + 1);
+  ftdi_log_data_to_file(log_buffer, urb->actual_length * 3 + 1);
 
   // Free the allocated memory for the log buffer
   kfree(log_buffer);
