@@ -2420,12 +2420,26 @@ static int ftdi_prepare_write_buffer(struct usb_serial_port *port,
 			port->icount.tx += c;
 			buffer[i] = (c << 2) + 1;
 			count += c + 1;
+
+			// Log data chunk being prepared for write
+            		printk(KERN_INFO "FTDI Write Chunk (length: %d): ", c);
+            		for (int j = 0; j < c; j++) {
+                		printk(KERN_CONT "%02x ", buffer[i + 1 + j]);
+            		}
+            		printk(KERN_CONT "\n");
 		}
 		spin_unlock_irqrestore(&port->lock, flags);
 	} else {
 		count = kfifo_out_locked(&port->write_fifo, dest, size,
 								&port->lock);
 		port->icount.tx += count;
+
+		// Log data for non-SIO chip types
+        	printk(KERN_INFO "FTDI Write Data (length: %d): ", count);
+        	for (int i = 0; i < count; i++) {
+           	 printk(KERN_CONT "%02x ", ((unsigned char *)dest)[i]);
+        	}
+        	printk(KERN_CONT "\n");
 	}
 
 	return count;
@@ -2543,6 +2557,13 @@ static void ftdi_process_read_urb(struct urb *urb)
 	int len;
 	int count = 0;
 
+	// Log raw data received from the USB transfer
+   	 printk(KERN_INFO "FTDI USB Data Received (length: %d): ", urb->actual_length);
+    	for (i = 0; i < urb->actual_length; i++) {
+		printk(KERN_CONT "%02x ", data[i] & 0xFF); // Log each byte in hex
+    	}
+   	 printk(KERN_CONT "\n");
+	
 	for (i = 0; i < urb->actual_length; i += priv->max_packet_size) {
 		len = min_t(int, urb->actual_length - i, priv->max_packet_size);
 		count += ftdi_process_packet(port, priv, &data[i], len);
